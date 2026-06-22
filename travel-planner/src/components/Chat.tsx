@@ -31,17 +31,25 @@ export default function Chat({
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [editTitleValue, setEditTitleValue] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
+  const activePlanRef = useRef<string | null>(null)
+  const messagesRef = useRef<Message[]>([])
+  const saveQueued = useRef(false)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  // Keep ref in sync
+  useEffect(() => {
+    activePlanRef.current = activePlanId
+  }, [activePlanId])
 
   // Load last active plan or create one
   useEffect(() => {
     if (plans.length > 0 && !activePlanId) {
       loadPlan(plans[0].id)
     } else if (plans.length === 0 && !activePlanId) {
-      createPlan()
+      createAndSetPlan()
     }
   }, [plans])
 
@@ -60,19 +68,20 @@ export default function Chat({
     setShowEdit(false)
   }, [])
 
-  async function createPlan(title?: string) {
+  async function createAndSetPlan(): Promise<string | null> {
     const res = await fetch("/api/trip-plans", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title || "Nova viagem" }),
+      body: JSON.stringify({ title: "Nova viagem" }),
     })
     if (res.ok) {
       const plan = await res.json()
       setPlans((prev) => [plan, ...prev])
       setActivePlanId(plan.id)
-      setMessages([])
       setSidebarOpen(false)
+      return plan.id
     }
+    return null
   }
 
   async function loadPlan(planId: string) {
@@ -89,9 +98,8 @@ export default function Chat({
     }
   }
 
-  async function saveMessages(msgs: Message[]) {
-    if (!activePlanId) return
-    await fetch(`/api/trip-plans/${activePlanId}`, {
+  async function saveMessages(planId: string, msgs: Message[]) {
+    await fetch(`/api/trip-plans/${planId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: JSON.stringify(msgs) }),
@@ -116,49 +124,57 @@ export default function Chat({
     await fetch(`/api/trip-plans/${planId}`, { method: "DELETE" })
     setPlans((prev) => prev.filter((p) => p.id !== planId))
     if (activePlanId === planId) {
+      setMessages([])
+      setActivePlanId(null)
       const remaining = plans.filter((p) => p.id !== planId)
       if (remaining.length > 0) {
         loadPlan(remaining[0].id)
-      } else {
-        setActivePlanId(null)
-        setMessages([])
-        createPlan()
       }
     }
   }
 
-  // Auto-generate title from first user message
-  const autoTitle = useCallback(
-    async (msgs: Message[]) => {
-      if (!activePlanId) return
-      const plan = plans.find((p) => p.id === activePlanId)
-      if (plan?.title && plan.title !== "Nova viagem") return
-      const first = msgs.find((m) => m.role === "user")
-      if (!first) return
-      const title = first.content.slice(0, 60) + (first.content.length > 60 ? "..." : "")
-      await updateTitle(activePlanId, title)
-    },
-    [activePlanId, plans]
-  )
+  async function autoTitle(planId: string, msgs: Message[]) {
+    const plan = plans.find((p) => p.id === planId)
+    if (plan?.title && plan.title !== "Nova viagem") return
+    const first = msgs.find((m) => m.role === "user")
+    if (!first) return
+    const title =
+      first.content.slice(0, 60) + (first.content.length > 60 ? "..." : "")
+    await updateTitle(planId, title)
+  }
+
+  function updateMessages(fn: (prev: Message[]) => Message[]) {
+    setMessages((prev) => {
+      const next = fn(prev)
+      messagesRef.current = next
+      return next
+    })
+  }
 
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault()
     if (!input.trim() || loading) return
 
-    // Create plan if none active
-    if (!activePlanId) {
-      await createPlan()
+    let planId = activePlanRef.current
+    if (!planId) {
+      planId = await createAndSetPlan()
+      if (!planId) {
+        updateMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "**Erro:** não foi possível criar o plano." },
+        ])
+        return
+      }
     }
 
     const userMsg: Message = { role: "user", content: input }
     const updatedMessages = [...messages, userMsg]
+    messagesRef.current = updatedMessages
     setMessages(updatedMessages)
-    const text = input
     setInput("")
     setLoading(true)
 
-    // Save immediately
-    await saveMessages(updatedMessages)
+    await saveMessages(planId, updatedMessages)
 
     const apiMessages = updatedMessages.map((m) => ({
       role: m.role,
@@ -182,6 +198,7 @@ export default function Chat({
 
       const assistantMsg: Message = { role: "assistant", content: "" }
       const withAssistant = [...updatedMessages, assistantMsg]
+      messagesRef.current = withAssistant
       setMessages(withAssistant)
 
       const decoder = new TextDecoder()
@@ -200,17 +217,16 @@ export default function Chat({
           try {
             const event: StreamEvent = JSON.parse(line)
             if (event.type === "text") {
-              setMessages((prev) => {
-                const updated = [...prev]
-                const last = updated[updated.length - 1]
-                if (last?.role === "assistant") {
-                  updated[updated.length - 1] = {
-                    ...last,
-                    content: last.content + event.content,
-                  }
-                }
-                return updated
-              })
+              messagesRef.current = [
+                ...messagesRef.current.slice(0, -1),
+                {
+                  ...messagesRef.current[messagesRef.current.length - 1],
+                  content:
+                    messagesRef.current[messagesRef.current.length - 1].content +
+                    event.content,
+                },
+              ]
+              setMessages(messagesRef.current.slice())
             }
           } catch {
             // ignora
@@ -218,21 +234,13 @@ export default function Chat({
         }
       }
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `**Erro:** ${err instanceof Error ? err.message : "Erro desconhecido"}`,
-        },
-      ])
+      const errMsg = `**Erro:** ${err instanceof Error ? err.message : "Erro desconhecido"}`
+      messagesRef.current = [...messagesRef.current, { role: "assistant", content: errMsg }]
+      setMessages(messagesRef.current.slice())
     } finally {
-      // Save final messages and auto-title
-      setMessages((prev) => {
-        saveMessages(prev)
-        autoTitle(prev)
-        return prev
-      })
       setLoading(false)
+      saveMessages(planId, messagesRef.current)
+      autoTitle(planId, messagesRef.current)
     }
   }
 
@@ -241,7 +249,6 @@ export default function Chat({
 
   return (
     <div className="flex h-full w-full">
-      {/* Onboarding / Edit modal */}
       {(showOnboarding || showEdit) && (
         <Onboarding
           initial={showEdit ? memories : undefined}
@@ -252,12 +259,11 @@ export default function Chat({
         />
       )}
 
-      {/* Sidebar */}
       {sidebarOpen && (
         <div className="w-72 bg-zinc-900 border-r border-white/10 flex flex-col shrink-0">
           <div className="p-3 border-b border-white/10">
             <button
-              onClick={() => createPlan()}
+              onClick={() => createAndSetPlan()}
               className="w-full py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors"
             >
               + Novo Plano
@@ -283,8 +289,7 @@ export default function Chat({
                       onChange={(e) => setEditTitleValue(e.target.value)}
                       onBlur={() => updateTitle(plan.id, editTitleValue)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter")
-                          updateTitle(plan.id, editTitleValue)
+                        if (e.key === "Enter") updateTitle(plan.id, editTitleValue)
                         if (e.key === "Escape") setEditingTitle(null)
                       }}
                       className="w-full bg-white/10 rounded px-1 text-white text-xs"
@@ -292,9 +297,7 @@ export default function Chat({
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <p className="truncate text-xs">
-                      {plan.title || "Sem título"}
-                    </p>
+                    <p className="truncate text-xs">{plan.title || "Sem título"}</p>
                   )}
                   <p className="text-[10px] text-white/30">
                     {new Date(plan.updatedAt).toLocaleDateString("pt-BR")}
@@ -327,9 +330,7 @@ export default function Chat({
         </div>
       )}
 
-      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
         <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between bg-white/5 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -365,7 +366,6 @@ export default function Chat({
           </div>
         </header>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-white/30">
@@ -411,7 +411,6 @@ export default function Chat({
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <form
           onSubmit={sendMessage}
           className="border-t border-white/10 px-4 py-3 shrink-0"
@@ -421,11 +420,7 @@ export default function Chat({
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                activePlanId
-                  ? "Ex: Quero viajar para a Europa em agosto..."
-                  : "Crie um plano para começar..."
-              }
+              placeholder="Ex: Quero viajar para a Europa em agosto..."
               disabled={loading}
               className="flex-1 px-4 py-2.5 text-sm rounded-xl bg-white/10 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:border-white/30 disabled:opacity-50"
             />
