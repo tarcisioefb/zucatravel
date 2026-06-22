@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ZucaTravel ✈️
 
-## Getting Started
+Planejador de viagens com inteligência artificial, usando modelos do **OpenCode Go**.
 
-First, run the development server:
+Converse em linguagem natural para descobrir destinos, comparar épocas, calcular orçamentos e montar roteiros completos.
+
+## Funcionalidades
+
+- **Chat com IA** — conversa natural com modelo DeepSeek V4 Flash via OpenCode Go
+- **Busca web** — pesquisa preços reais de passagens, hotéis e atrações (via Tavily)
+- **Orçamento detalhado** — calcula custo total com passagem, hospedagem, alimentação, passeios e transporte
+- **Roteiro dia a dia** — sugere roteiros personalizados baseados no destino e interesses
+- **Memória persistente** — o assistente lembra suas preferências entre sessões
+- **Autenticação** — login e cadastro com senha criptografada
+- **BYOK (Bring Your Own Key)** — use sua própria chave do OpenCode Go
+
+## Stack
+
+| Camada | Tecnologia |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Frontend | React, Tailwind CSS |
+| Banco | SQLite via Prisma |
+| Autenticação | NextAuth v5 |
+| IA | OpenCode Go (API compatível com OpenAI) |
+| Busca web | Tavily (opcional) |
+
+## Pré-requisitos
+
+- Node.js >= 20.9.0
+- Assinatura do [OpenCode Go](https://opencode.ai/auth) (US$ 10/mês)
+
+## Configuração
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Clone o repositório
+git clone https://github.com/tarcisioefb/zucatravel.git
+cd zucatravel
+
+# Instale as dependências
+npm install
+
+# Configure as variáveis de ambiente
+cp .env.local.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Edite `.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```env
+OPENCODE_GO_KEY=sk-sua-chave-do-opencode-go
+TAVILY_API_KEY=sua-chave-tavily  # opcional, cadastre em tavily.com
+AUTH_SECRET=um-segredo-aleatorio  # gere com: openssl rand -base64 32
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+# Rode em desenvolvimento
+npm run dev
+```
 
-## Learn More
+Acesse http://localhost:3000
 
-To learn more about Next.js, take a look at the following resources:
+## Deploy na Hostinger
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. No hPanel → **Avançado → Node.js**, crie uma aplicação:
+   - Caminho: `travel-planner` (ou nome da pasta)
+   - Entry point: `npm start`
+   - Modo: `production`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+2. Conecte o repositório via Git no hPanel
 
-## Deploy on Vercel
+3. Configure as variáveis de ambiente:
+   ```
+   OPENCODE_GO_KEY=sk-sua-chave
+   TAVILY_API_KEY=sk-sua-chave-tavily
+   AUTH_SECRET=seu-segredo
+   DATABASE_URL=file:./dev.db
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+4. Faça o deploy — o `postinstall` cria o banco automaticamente
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## API
+
+O app expõe endpoints para gerenciar memórias do usuário:
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/memories` | Lista memórias do usuário |
+| `POST` | `/api/memories` | Salva uma memória (`{ key, value }`) |
+| `DELETE` | `/api/memories` | Remove uma memória (`{ key }`) |
+
+## Licença
+
+MIT
