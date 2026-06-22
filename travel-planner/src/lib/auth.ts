@@ -4,9 +4,12 @@ import { PrismaAdapter } from "@auth/prisma-adapter"
 import bcrypt from "bcryptjs"
 import { prisma } from "./db"
 
+const AUTH_URL = process.env.AUTH_URL || `https://${process.env.VERCEL_URL || "travel.zucatech.com"}`
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
