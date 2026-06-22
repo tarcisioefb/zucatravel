@@ -1,26 +1,11 @@
 import { getOpenCodeClient } from "@/lib/opencode"
 import { travelTools, executarTool } from "@/lib/tools"
-import OpenAI from "openai"
+import { auth } from "@/lib/auth"
+import { prisma } from "@/lib/db"
 
 export const runtime = "nodejs"
 
-export async function POST(req: Request) {
-  try {
-    const { messages, apiKey } = (await req.json()) as {
-      messages: OpenAI.ChatCompletionMessageParam[]
-      apiKey?: string
-    }
-
-    const model =
-      (process.env.OPENCODE_GO_MODEL as string) || "deepseek-v4-flash"
-    const client = getOpenCodeClient(apiKey)
-
-    const stream = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: `Você é um assistente de viagens direto ao ponto.
+const SYSTEM_PROMPT = `Você é um assistente de viagens direto ao ponto.
 
 ## Ferramentas
 - **search_web** — busca preços/hospedagem/atrações atuais
@@ -30,10 +15,47 @@ export async function POST(req: Request) {
 ## Regras de resposta
 - Seja **sucinto**. Prefira tópicos a parágrafos.
 - Use **tabelas simples** para comparar (ex: épocas, preços).
+- Sempre que o usuário mencionar uma preferência pessoal (destino favorito, orçamento, restrições, etc.), termine sua resposta perguntando se quer que eu salve essa informação.
 - Sempre termine com uma **recomendação clara**.
 - Sem gírias, sem emojis, sem rodeios.
-- Se o usuário pedir busca, use search_web antes de responder.`,
-        },
+- Se o usuário pedir busca, use search_web antes de responder.`
+
+export async function POST(req: Request) {
+  try {
+    const session = await auth()
+    if (!session?.user?.id) {
+      return new Response(JSON.stringify({ error: "Não autenticado" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      })
+    }
+
+    const { messages } = (await req.json()) as {
+      messages: Array<{ role: "user" | "assistant"; content: string }>
+    }
+
+    const memories = await prisma.memory.findMany({
+      where: { userId: session.user.id },
+    })
+
+    let userContext = ""
+    if (memories.length > 0) {
+      const items = memories
+        .map((m) => `- ${m.key}: ${m.value}`)
+        .join("\n")
+      userContext = `\n\n## Informações que você sabe sobre o usuário\n${items}\n\nUse essas informações para personalizar as recomendações.`
+    }
+
+    const model =
+      (process.env.OPENCODE_GO_MODEL as string) || "deepseek-v4-flash"
+    const client = getOpenCodeClient()
+
+    const systemContent = SYSTEM_PROMPT + userContext
+
+    const stream = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: systemContent },
         ...messages,
       ],
       tools: travelTools,
@@ -90,17 +112,6 @@ export async function POST(req: Request) {
               }
               const result = await executarTool(toolCall.function.name, args)
               results.push(result)
-
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: "tool_use",
-                    tool: toolCall.function.name,
-                    args: args,
-                    result: result,
-                  }) + "\n"
-                )
-              )
             }
 
             const followUp = await client.chat.completions.create({
@@ -113,8 +124,9 @@ export async function POST(req: Request) {
 ## Regras de resposta
 - Seja **sucinto**. Prefira tópicos a parágrafos.
 - Use **tabelas simples** para comparar.
+- Sempre que o usuário mencionar uma preferência pessoal, pergunte se quer salvar.
 - Sempre termine com uma **recomendação clara**.
-- Sem gírias, sem emojis, sem rodeios.`,
+- Sem gírias, sem emojis, sem rodeios.${userContext}`,
                 },
                 ...messages,
                 {
