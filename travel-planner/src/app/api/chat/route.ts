@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     }
 
     const model =
-      (process.env.OPENCODE_GO_MODEL as string) || "opencode-go/deepseek-v4-flash"
+      (process.env.OPENCODE_GO_MODEL as string) || "deepseek-v4-flash"
     const client = getOpenCodeClient(apiKey)
 
     const stream = await client.chat.completions.create({
