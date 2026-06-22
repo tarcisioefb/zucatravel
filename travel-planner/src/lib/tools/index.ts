@@ -4,6 +4,29 @@ export const travelTools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "salvar_preferencia",
+      description:
+        "Salva uma preferência do usuário no banco para usar em conversas futuras. Use SEMPRE que identificar uma preferência pessoal relevante para viagens (destino, origem, orçamento, interesses, restrições, época preferida, etc.).",
+      parameters: {
+        type: "object",
+        properties: {
+          key: {
+            type: "string",
+            description:
+              "Nome da preferência (ex: 'destino_favorito', 'origem', 'orcamento_maximo', 'restricao_alimentar', 'interesses', 'epoca_preferida', 'companhia', 'tipo_hospedagem', 'transporte_preferido')",
+          },
+          value: {
+            type: "string",
+            description: "Valor da preferência",
+          },
+        },
+        required: ["key", "value"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "search_web",
       description:
         "Busca informações atualizadas na internet sobre destinos, passagens, hotéis, etc.",
@@ -77,9 +100,26 @@ export const travelTools: OpenAI.ChatCompletionTool[] = [
 
 export async function executarTool(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  userId?: string
 ): Promise<string> {
   switch (name) {
+    case "salvar_preferencia": {
+      if (!userId) return "Usuário não autenticado."
+      const { prisma } = await import("@/lib/db")
+      await prisma.memory.upsert({
+        where: {
+          userId_key: { userId, key: args.key as string },
+        },
+        update: { value: args.value as string },
+        create: {
+          userId,
+          key: args.key as string,
+          value: args.value as string,
+        },
+      })
+      return `Preferência "${args.key}" salva com valor "${args.value}".`
+    }
     case "search_web":
       return searchWeb(args.query as string)
     case "calcular_orcamento":

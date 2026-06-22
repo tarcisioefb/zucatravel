@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { signOut } from "next-auth/react"
+import Onboarding from "./Onboarding"
 
 type Message = {
   role: "user" | "assistant"
@@ -10,12 +11,11 @@ type Message = {
 
 type StreamEvent =
   | { type: "text"; content: string }
-  | { type: "tool_use"; tool: string; args: Record<string, unknown>; result: string }
   | { type: "done" }
 
 export default function Chat({
   userName,
-  memories,
+  memories: initialMemories,
 }: {
   userName?: string
   memories?: Record<string, string>
@@ -23,12 +23,31 @@ export default function Chat({
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
-  const [savingMemory, setSavingMemory] = useState(false)
+  const [memories, setMemories] = useState(initialMemories ?? {})
+  const [showOnboarding, setShowOnboarding] = useState(
+    !initialMemories || Object.keys(initialMemories).length === 0
+  )
+  const [showEdit, setShowEdit] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  const saveMemories = useCallback(async (answers: Record<string, string>) => {
+    for (const [key, value] of Object.entries(answers)) {
+      if (value?.trim()) {
+        await fetch("/api/memories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, value }),
+        })
+      }
+    }
+    setMemories((prev) => ({ ...prev, ...answers }))
+    setShowOnboarding(false)
+    setShowEdit(false)
+  }, [])
 
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault()
@@ -110,8 +129,21 @@ export default function Chat({
     }
   }
 
+  const hasMemories = Object.keys(memories).length > 0
+
   return (
     <div className="flex flex-col h-full">
+      {/* Onboarding / Edit modal */}
+      {(showOnboarding || showEdit) && (
+        <Onboarding
+          initial={showEdit ? memories : undefined}
+          onSave={saveMemories}
+          onClose={
+            showOnboarding && !showEdit ? () => setShowOnboarding(false) : undefined
+          }
+        />
+      )}
+
       {/* Header */}
       <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between bg-white/5 shrink-0">
         <div>
@@ -121,6 +153,14 @@ export default function Chat({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {hasMemories && (
+            <button
+              onClick={() => setShowEdit(true)}
+              className="text-xs px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition-colors"
+            >
+              Preferências
+            </button>
+          )}
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="text-xs px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition-colors"
@@ -137,12 +177,9 @@ export default function Chat({
             <div className="text-5xl mb-4">✈️</div>
             <p className="text-sm">Pergunte sobre destinos, peça orçamentos</p>
             <p className="text-xs mt-1">ou peça ajuda para planejar sua próxima viagem!</p>
-            {memories && Object.keys(memories).length > 0 && (
+            {hasMemories && (
               <div className="mt-6 text-xs text-white/20 max-w-xs text-center">
-                Eu lembro de você! Preferências salvas:{" "}
-                {Object.entries(memories)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join(" | ")}
+                Preferências salvas. O assistente já sabe dessas informações.
               </div>
             )}
           </div>

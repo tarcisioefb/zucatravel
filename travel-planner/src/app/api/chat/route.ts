@@ -8,6 +8,7 @@ export const runtime = "nodejs"
 const SYSTEM_PROMPT = `Você é um assistente de viagens direto ao ponto.
 
 ## Ferramentas
+- **salvar_preferencia** — USE AUTOMATICAMENTE quando o usuário mencionar qualquer preferência pessoal (destino, origem, orçamento, interesses, restrições, época, etc.). Não pergunte se pode salvar, apenas salve.
 - **search_web** — busca preços/hospedagem/atrações atuais
 - **calcular_orcamento** — calcula orçamento total
 - **sugerir_roteiro** — monta roteiro dia a dia
@@ -15,7 +16,6 @@ const SYSTEM_PROMPT = `Você é um assistente de viagens direto ao ponto.
 ## Regras de resposta
 - Seja **sucinto**. Prefira tópicos a parágrafos.
 - Use **tabelas simples** para comparar (ex: épocas, preços).
-- Sempre que o usuário mencionar uma preferência pessoal (destino favorito, orçamento, restrições, etc.), termine sua resposta perguntando se quer que eu salve essa informação.
 - Sempre termine com uma **recomendação clara**.
 - Sem gírias, sem emojis, sem rodeios.
 - Se o usuário pedir busca, use search_web antes de responder.`
@@ -110,7 +110,11 @@ export async function POST(req: Request) {
               } catch {
                 args = {}
               }
-              const result = await executarTool(toolCall.function.name, args)
+              const result = await executarTool(
+                toolCall.function.name,
+                args,
+                session.user!.id
+              )
               results.push(result)
             }
 
@@ -119,14 +123,7 @@ export async function POST(req: Request) {
               messages: [
                 {
                   role: "system",
-                  content: `Você é um assistente de viagens direto ao ponto.
-
-## Regras de resposta
-- Seja **sucinto**. Prefira tópicos a parágrafos.
-- Use **tabelas simples** para comparar.
-- Sempre que o usuário mencionar uma preferência pessoal, pergunte se quer salvar.
-- Sempre termine com uma **recomendação clara**.
-- Sem gírias, sem emojis, sem rodeios.${userContext}`,
+                  content: SYSTEM_PROMPT + userContext,
                 },
                 ...messages,
                 {
@@ -147,6 +144,8 @@ export async function POST(req: Request) {
                   content: results[i],
                 })),
               ],
+              tools: travelTools,
+              tool_choice: "auto",
               stream: true,
               stream_options: { include_usage: true },
             })
